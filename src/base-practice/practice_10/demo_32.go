@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	study "go-notes/src/practice_9"
+	"go-notes/src/base-practice/practice_9"
 )
 
 func main() {

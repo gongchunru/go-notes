@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	friend "go-notes/src/practice_11"
+	"go-notes/src/base-practice/practice_11"
 )
 
 func main() {
