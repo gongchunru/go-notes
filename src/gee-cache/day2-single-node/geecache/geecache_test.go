@@ -56,19 +56,6 @@ func TestGet(t *testing.T) {
 			return nil, fmt.Errorf("%s not exist", key)
 		}))
 
-	//for k, v := range db {
-	//	if view, err := gee.Get(k); err != nil || view.String() != v {
-	//		t.Fatal("failed to get value of Tom")
-	//	}
-	//	if _, err := gee.Get(k); err != nil || loadCounts[k] > 1 {
-	//		t.Fatalf("cache %s miss", k)
-	//	}
-	//}
-	//
-	//if view, err := gee.Get("unknown"); err == nil {
-	//	t.Fatalf("the value of unknow should be empty , but %s got", view)
-	//}
-
 	for k, v := range db {
 		if view, err := gee.Get(k); err != nil || view.String() != v {
 			t.Fatal("failed to get value of Tom")
@@ -80,5 +67,20 @@ func TestGet(t *testing.T) {
 
 	if view, err := gee.Get("unknown"); err == nil {
 		t.Fatalf("the value of unknow should be empty, but %s got", view)
+	}
+}
+
+func TestGetGroup(t *testing.T) {
+	groupName := "scores"
+	NewGroup(groupName, 2<<10, GetterFunc(
+		func(key string) (bytes []byte, err error) {
+			return
+		}))
+	if group := GetGroup(groupName); group == nil || group.name != groupName {
+		t.Fatalf("group %s not exist", groupName)
+	}
+
+	if group := GetGroup(groupName + "1111"); group != nil {
+		t.Fatalf("expect nil, but %s got", group.name)
 	}
 }
