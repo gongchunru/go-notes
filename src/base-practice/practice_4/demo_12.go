@@ -8,11 +8,11 @@ func main() {
 	p1[1] = "Tom"
 	fmt.Println("p1:", p1)
 
-	var p2 map[int]string = map[int]string{}
+	var p2 = map[int]string{}
 	p2[1] = "tom"
 	fmt.Println("p2:", p2)
 
-	var p3 map[int]string = make(map[int]string)
+	var p3 = make(map[int]string)
 	p3[1] = "Tom"
 	fmt.Println("p3", p3)
 

@@ -19,7 +19,7 @@ func main() {
 	sli_4 := []int{1, 2, 3, 4, 5}
 	fmt.Printf("len=%d cap=%d slicen=%v\n", len(sli_4), cap(sli_4), sli_4)
 
-	var sli_5 []int = make([]int, 5, 8)
+	var sli_5 = make([]int, 5, 8)
 	fmt.Printf("len=%d cap=%d slicen=%v\n", len(sli_5), cap(sli_5), sli_5)
 
 	sli_6 := make([]int, 5, 9)

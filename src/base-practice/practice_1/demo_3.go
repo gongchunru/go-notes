@@ -8,7 +8,7 @@ func main() {
 	modifyArray(&arr)
 	fmt.Println(arr)
 
-	var arr_2 [5]int = arr
+	var arr_2 = arr
 
 	fmt.Println(arr_2)
 }

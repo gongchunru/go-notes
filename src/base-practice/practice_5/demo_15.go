@@ -26,7 +26,7 @@ func main() {
 	}
 
 	//
-	for k, _ := range person {
+	for k := range person {
 		fmt.Println("k:", k)
 	}
 }
