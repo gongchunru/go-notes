@@ -1,23 +1,24 @@
 package session
 
 import (
-	"database/sql"
-	"os"
 	"testing"
 )
 
-var TestDB *sql.DB
-
-func TestMain(m *testing.M) {
-	TestDB, _ = sql.Open("sqlite3", "../gee.db")
-	code := m.Run()
-	_ = TestDB
-	os.Exit(code)
-}
-
-func NewSession() *Session {
-	return New(TestDB)
-}
+//var (
+//	TestDB      *sql.DB
+//	TestDial, _ = dialect.GetDialect("sqlite3")
+//)
+//
+//func TestMain(m *testing.M) {
+//	TestDB, _ = sql.Open("sqlite3", "../gee.db")
+//	code := m.Run()
+//	_ = TestDB.Close()
+//	os.Exit(code)
+//}
+//
+//func NewSession() *Session {
+//	return New(TestDB, TestDial)
+//}
 
 func TestSession_Exec(t *testing.T) {
 	s := NewSession()
