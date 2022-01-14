@@ -3,3 +3,4 @@ bin
 /pkg
 main
 *.DS_Store
+*.db
