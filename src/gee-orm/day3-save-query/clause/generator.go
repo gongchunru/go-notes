@@ -22,7 +22,7 @@ func init() {
 func getBindVars(num int) string {
 	var vars []string
 	for i := 0; i < num; i++ {
-		vars = append(vars, vars[i])
+		vars = append(vars, "?")
 	}
 	return strings.Join(vars, ",")
 

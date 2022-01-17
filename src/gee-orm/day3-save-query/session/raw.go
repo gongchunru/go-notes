@@ -2,6 +2,7 @@ package session
 
 import (
 	"database/sql"
+	"geeorm/clause"
 	"geeorm/dialect"
 	"geeorm/log"
 	"geeorm/schema"
@@ -12,8 +13,10 @@ type Session struct {
 	db       *sql.DB
 	dialect  dialect.Dialect
 	refTable *schema.Schema
-	sql      strings.Builder
-	sqlVars  []interface{}
+	// 生成简单的插入(INSERT) 和 查询(SELECT) 的 SQL 语句
+	clause  clause.Clause
+	sql     strings.Builder
+	sqlVars []interface{}
 }
 
 func New(db *sql.DB, dialect dialect.Dialect) *Session {
