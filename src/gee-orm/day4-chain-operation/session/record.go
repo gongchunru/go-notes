@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"geeorm/clause"
 	"reflect"
 )
@@ -75,10 +76,21 @@ func (s *Session) Update(kv ...interface{}) (int64, error) {
 	m, ok := kv[0].(map[string]interface{})
 	if !ok {
 		m = make(map[string]interface{})
+		//for i := 0; i < len(kv); i += 2 {
+		//	m[kv[i].(string)] = kv[i+1]
+		//}
 		for i := 0; i < len(kv); i += 2 {
 			m[kv[i].(string)] = kv[i+1]
 		}
 	}
+	//s.clause.Set(clause.UPDATE, s.RefTable().Name, m)
+	//sql, vars := s.clause.Build(clause.UPDATE, clause.WHERE)
+	//result, err := s.Raw(sql, vars...).Exec()
+	//if err != nil {
+	//	return 0, err
+	//}
+	//return result.RowsAffected()
+
 	s.clause.Set(clause.UPDATE, s.RefTable().Name, m)
 	sql, vars := s.clause.Build(clause.UPDATE, clause.WHERE)
 	result, err := s.Raw(sql, vars...).Exec()
@@ -106,4 +118,35 @@ func (s *Session) Count() (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+func (s *Session) Limit(num int) *Session {
+	s.clause.Set(clause.LIMIT, num)
+	return s
+}
+
+func (s *Session) Where(desc string, args ...interface{}) *Session {
+	var vars []interface{}
+	s.clause.Set(clause.WHERE, append(append(vars, desc), args...)...)
+	return s
+}
+
+func (s *Session) OrderBy(desc string) *Session {
+	s.clause.Set(clause.ORDERBY, desc)
+	return s
+}
+
+func (s *Session) First(value interface{}) error {
+	dest := reflect.Indirect(reflect.ValueOf(value))
+	// 利用反射构造切片
+	destSlice := reflect.New(reflect.SliceOf(dest.Type())).Elem()
+	// 调用 Limit(1) 限制返回的行数，调用 Find 方法获取到查询结果。
+	if err := s.Limit(1).Find(destSlice.Addr().Interface()); err != nil {
+		return err
+	}
+	if destSlice.Len() == 0 {
+		return errors.New("NOT FOUND")
+	}
+	dest.Set(destSlice.Index(0))
+	return nil
 }
