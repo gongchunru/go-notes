@@ -37,7 +37,7 @@ func _update(values ...interface{}) (string, []interface{}) {
 	var keys []string
 	var vars []interface{}
 	for k, v := range m {
-		keys = append(keys, k)
+		keys = append(keys, k+" = ?")
 		vars = append(vars, v)
 	}
 	return fmt.Sprintf("UPDATE %s SET %s", tableName, strings.Join(keys, ", ")), vars
