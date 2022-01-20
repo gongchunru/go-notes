@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/gob"
 	"io"
+	"log"
 )
 
 type GobCodec struct {
@@ -25,8 +26,22 @@ func (g *GobCodec) ReaderBody(body interface{}) error {
 	return g.dec.Decode(body)
 }
 
-func (g *GobCodec) Write(header *Header, i interface{}) error {
+func (g *GobCodec) Write(header *Header, body interface{}) (err error) {
+	defer func() {
+		_ = g.buf.Flush()
+		if err != nil {
+			_ = g.Close()
+		}
+	}()
 
+	if err := g.enc.Encode(header); err != nil {
+		log.Println("rpc codec: gob error encoding header:", err)
+		return err
+	}
+	if err := g.enc.Encode(body); err != nil {
+		log.Println("rpc codec: gob error encoding body:", err)
+	}
+	return nil
 }
 
 var _ Codec = (*GobCodec)(nil)
