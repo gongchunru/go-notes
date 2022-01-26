@@ -3,32 +3,25 @@ package geerpc4
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"geerpc4/codec"
-	"go/ast"
 	"io"
 	"log"
 	"net"
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 )
 
 const MagicNumber = 0x3bef5c
 
 type Option struct {
-	MagicNumber       int
-	CodecType         codec.Type
-	ConnectionTimeout time.Duration
-	HandlerTimeout    time.Duration
+	MagicNumber int
+	CodecType   codec.Type
 }
 
 var DefaultOption = &Option{
-	MagicNumber:       MagicNumber,
-	CodecType:         codec.GobType,
-	ConnectionTimeout: time.Second * 10,
+	MagicNumber: MagicNumber,
+	CodecType:   codec.GobType,
 }
 
 type Server struct {
@@ -75,7 +68,7 @@ func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 		log.Printf("rpc server: invalid codec type %s", opt.CodecType)
 		return
 	}
-	server.serveCodec(f(conn), &opt)
+	server.serveCodec(f(conn))
 }
 
 var invalidRequest = struct{}{}
@@ -85,7 +78,7 @@ var invalidRequest = struct{}{}
 //处理请求 handleRequest
 //回复请求 sendResponse
 // handleRequest 使用了协程并发执行请求。
-func (server *Server) serveCodec(cc codec.Codec, opt *Option) {
+func (server *Server) serveCodec(cc codec.Codec) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
@@ -99,7 +92,7 @@ func (server *Server) serveCodec(cc codec.Codec, opt *Option) {
 			continue
 		}
 		wg.Add(1)
-		go server.handleRequest(cc, req, sending, wg, opt.HandlerTimeout)
+		go server.handleRequest(cc, req, sending, wg)
 	}
 	wg.Wait()
 	_ = cc.Close()
@@ -156,131 +149,17 @@ func (server *Server) sendResponse(cc codec.Codec, h *codec.Header, body interfa
 	}
 }
 
-func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
+func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
 	defer wg.Done()
 	// 方法调用
-
-	called := make(chan struct{})
-	sent := make(chan struct{})
-
-	go func() {
-		err := req.svc.call(req.mType, req.argv, req.replyv)
-		called <- struct{}{}
-		if err != nil {
-			req.h.Error = err.Error()
-			server.sendResponse(cc, req.h, invalidRequest, sending)
-			sent <- struct{}{}
-			return
-		}
-		server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
-	}()
-
-	if timeout == 0 {
-		<-called
-		<-sent
+	err := req.svc.call(req.mType, req.argv, req.replyv)
+	if err != nil {
+		req.h.Error = err.Error()
+		// 完成序列化
+		server.sendResponse(cc, req.h, invalidRequest, sending)
 		return
 	}
-
-	select {
-	case <-time.After(timeout):
-		req.h.Error = fmt.Sprintf("rpc server : request handle timeout : expect within %s", timeout)
-		server.sendResponse(cc, req.h, invalidRequest, sending)
-	case <-called:
-		<-sent
-	}
-}
-
-type methodType struct {
-	method    reflect.Method
-	ArgType   reflect.Type
-	ReplyType reflect.Type
-	numCalls  uint64
-}
-
-func (m *methodType) NumCalls() uint64 {
-	return atomic.LoadUint64(&m.numCalls)
-}
-
-// 创造出两个入参实例
-func (m *methodType) newArgv() reflect.Value {
-	var argv reflect.Value
-	// 指针类型
-	if m.ArgType.Kind() == reflect.Ptr {
-		argv = reflect.New(m.ArgType.Elem())
-	} else {
-		argv = reflect.New(m.ArgType).Elem()
-	}
-	return argv
-}
-
-func (m *methodType) newReplyv() reflect.Value {
-	replyv := reflect.New(m.ReplyType.Elem())
-	switch m.ReplyType.Elem().Kind() {
-	case reflect.Map:
-		replyv.Elem().Set(reflect.MakeMap(m.ReplyType.Elem()))
-	case reflect.Slice:
-		replyv.Elem().Set(reflect.MakeSlice(m.ReplyType.Elem(), 0, 0))
-	}
-	return replyv
-}
-
-type service struct {
-	name   string
-	typ    reflect.Type
-	rcvr   reflect.Value
-	method map[string]*methodType
-}
-
-func (s *service) registerMethods() {
-	s.method = make(map[string]*methodType)
-	for i := 0; i < s.typ.NumMethod(); i++ {
-		method := s.typ.Method(i)
-		mType := method.Type
-		//返回值有且只有 1 个，类型为 error
-		//两个导出或内置类型的入参
-		if mType.NumIn() != 3 || mType.NumOut() != 1 {
-			continue
-		}
-		if mType.Out(0) != reflect.TypeOf((*error)(nil)).Elem() {
-			continue
-		}
-		argType, replyType := mType.In(1), mType.In(2)
-		if !isExportedOrBuiltinType(argType) || !isExportedOrBuiltinType(replyType) {
-			continue
-		}
-		s.method[method.Name] = &methodType{
-			method:    method,
-			ArgType:   argType,
-			ReplyType: replyType,
-		}
-		log.Printf("rpc server: register %s.%s\n", s.name, method.Name)
-	}
-}
-
-func isExportedOrBuiltinType(t reflect.Type) bool {
-	return ast.IsExported(t.Name()) || t.PkgPath() == ""
-}
-
-func (s *service) call(m *methodType, argv, replyv reflect.Value) error {
-	atomic.AddUint64(&m.numCalls, 1)
-	f := m.method.Func
-	returnValues := f.Call([]reflect.Value{s.rcvr, argv, replyv})
-	if errInter := returnValues[0].Interface(); errInter != nil {
-		return errInter.(error)
-	}
-	return nil
-}
-
-func newService(rcvr interface{}) *service {
-	s := new(service)
-	s.rcvr = reflect.ValueOf(rcvr)
-	s.name = reflect.Indirect(s.rcvr).Type().Name()
-	s.typ = reflect.TypeOf(rcvr)
-	if !ast.IsExported(s.name) {
-		log.Fatalf("rpc server : %s is not a valid service name", s.name)
-	}
-	s.registerMethods()
-	return s
+	server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
 }
 
 func (server *Server) Register(rcvr interface{}) error {

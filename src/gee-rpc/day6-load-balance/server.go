@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"geerpc6/codec"
-	"go/ast"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -40,22 +39,6 @@ func NewServer() *Server {
 }
 
 var DefaultServer = NewServer()
-
-func (server *Server) Accept(lis net.Listener) {
-	for {
-		conn, err := lis.Accept()
-		if err != nil {
-			log.Println("rpc server: accept error:", err)
-			return
-		}
-		//并开启子协程处理，处理过程交给了 ServeConn 方法。
-		go server.ServeConn(conn)
-	}
-}
-
-func Accept(lis net.Listener) {
-	DefaultServer.Accept(lis)
-}
 
 func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 	defer func() { _ = conn.Close() }()
@@ -118,6 +101,7 @@ func (server *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 		if err != io.EOF || err != io.ErrUnexpectedEOF {
 			log.Println("rpc server: read header error:", err)
 		}
+		return nil, err
 	}
 	return &h, nil
 }
@@ -173,6 +157,7 @@ func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.
 			return
 		}
 		server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+		sent <- struct{}{}
 	}()
 
 	if timeout == 0 {
@@ -190,97 +175,20 @@ func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.
 	}
 }
 
-type methodType struct {
-	method    reflect.Method
-	ArgType   reflect.Type
-	ReplyType reflect.Type
-	numCalls  uint64
-}
-
-func (m *methodType) NumCalls() uint64 {
-	return atomic.LoadUint64(&m.numCalls)
-}
-
-// 创造出两个入参实例
-func (m *methodType) newArgv() reflect.Value {
-	var argv reflect.Value
-	// 指针类型
-	if m.ArgType.Kind() == reflect.Ptr {
-		argv = reflect.New(m.ArgType.Elem())
-	} else {
-		argv = reflect.New(m.ArgType).Elem()
-	}
-	return argv
-}
-
-func (m *methodType) newReplyv() reflect.Value {
-	replyv := reflect.New(m.ReplyType.Elem())
-	switch m.ReplyType.Elem().Kind() {
-	case reflect.Map:
-		replyv.Elem().Set(reflect.MakeMap(m.ReplyType.Elem()))
-	case reflect.Slice:
-		replyv.Elem().Set(reflect.MakeSlice(m.ReplyType.Elem(), 0, 0))
-	}
-	return replyv
-}
-
-type service struct {
-	name   string
-	typ    reflect.Type
-	rcvr   reflect.Value
-	method map[string]*methodType
-}
-
-func (s *service) registerMethods() {
-	s.method = make(map[string]*methodType)
-	for i := 0; i < s.typ.NumMethod(); i++ {
-		method := s.typ.Method(i)
-		mType := method.Type
-		//返回值有且只有 1 个，类型为 error
-		//两个导出或内置类型的入参
-		if mType.NumIn() != 3 || mType.NumOut() != 1 {
-			continue
+func (server *Server) Accept(lis net.Listener) {
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Println("rpc server: accept error:", err)
+			return
 		}
-		if mType.Out(0) != reflect.TypeOf((*error)(nil)).Elem() {
-			continue
-		}
-		argType, replyType := mType.In(1), mType.In(2)
-		if !isExportedOrBuiltinType(argType) || !isExportedOrBuiltinType(replyType) {
-			continue
-		}
-		s.method[method.Name] = &methodType{
-			method:    method,
-			ArgType:   argType,
-			ReplyType: replyType,
-		}
-		log.Printf("rpc server: register %s.%s\n", s.name, method.Name)
+		//并开启子协程处理，处理过程交给了 ServeConn 方法。
+		go server.ServeConn(conn)
 	}
 }
 
-func isExportedOrBuiltinType(t reflect.Type) bool {
-	return ast.IsExported(t.Name()) || t.PkgPath() == ""
-}
-
-func (s *service) call(m *methodType, argv, replyv reflect.Value) error {
-	atomic.AddUint64(&m.numCalls, 1)
-	f := m.method.Func
-	returnValues := f.Call([]reflect.Value{s.rcvr, argv, replyv})
-	if errInter := returnValues[0].Interface(); errInter != nil {
-		return errInter.(error)
-	}
-	return nil
-}
-
-func newService(rcvr interface{}) *service {
-	s := new(service)
-	s.rcvr = reflect.ValueOf(rcvr)
-	s.name = reflect.Indirect(s.rcvr).Type().Name()
-	s.typ = reflect.TypeOf(rcvr)
-	if !ast.IsExported(s.name) {
-		log.Fatalf("rpc server : %s is not a valid service name", s.name)
-	}
-	s.registerMethods()
-	return s
+func Accept(lis net.Listener) {
+	DefaultServer.Accept(lis)
 }
 
 func (server *Server) Register(rcvr interface{}) error {
@@ -294,6 +202,12 @@ func (server *Server) Register(rcvr interface{}) error {
 func Register(rcvr interface{}) error {
 	return DefaultServer.Register(rcvr)
 }
+
+const (
+	connected        = "200 Connected to Gee RPC"
+	defaultRPCPath   = "/_geerpc_"
+	defaultDebugPath = "/debug/geerpc"
+)
 
 func (server *Server) findService(serviceMethod string) (svc *service, mType *methodType, err error) {
 	dot := strings.LastIndex(serviceMethod, ".")
@@ -314,4 +228,35 @@ func (server *Server) findService(serviceMethod string) (svc *service, mType *me
 		err = errors.New("rpc server: can't find method " + methodName)
 	}
 	return
+}
+
+// ServeHTTP implements an http.Handler that answers RPC requests.
+func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, "405 must CONNECT\n")
+		return
+	}
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		log.Print("rpc hijacking ", req.RemoteAddr, ": ", err.Error())
+		return
+	}
+	_, _ = io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n")
+	server.ServeConn(conn)
+}
+
+// HandleHTTP registers an HTTP handler for RPC messages on rpcPath,
+// and a debugging handler on debugPath.
+// It is still necessary to invoke http.Serve(), typically in a go statement.
+func (server *Server) HandleHTTP() {
+	http.Handle(defaultRPCPath, server)
+	http.Handle(defaultDebugPath, debugHTTP{server})
+	log.Println("rpc server debug path:", defaultDebugPath)
+}
+
+// HandleHTTP is a convenient approach for default server to register HTTP handlers
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
 }
